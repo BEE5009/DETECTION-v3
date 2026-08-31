@@ -1,5 +1,6 @@
 import pickle
 import sys
+import time
 from pathlib import Path
 from typing import Any, Sequence, cast
 import cv2
@@ -42,7 +43,6 @@ def draw_hand_landmarks_on_frame(frame: np.ndarray, hand_landmarks: Sequence[Any
 
 
 def draw_face_landmarks_on_frame(frame: np.ndarray, face_landmarks: Sequence[Any]) -> np.ndarray:
-    """Draw face mesh (468 points) - Blue"""
     h, w, _ = frame.shape
     for landmark in face_landmarks:
         x, y = int(landmark.x * w), int(landmark.y * h)
@@ -51,7 +51,6 @@ def draw_face_landmarks_on_frame(frame: np.ndarray, face_landmarks: Sequence[Any
 
 
 def draw_body_landmarks_on_frame(frame: np.ndarray, pose_landmarks: Sequence[Any]) -> np.ndarray:
-    """Draw body skeleton (33 joints) - Cyan"""
     h, w, _ = frame.shape
     body_connections = [
         (11, 13), (13, 15), (12, 14), (14, 16),
@@ -83,7 +82,6 @@ try:
 except ImportError:
     gTTS = None
     GTTS_AVAILABLE = False
-    safe_print("Warning: gtts not installed; voice output disabled. Install with: pip install gTTS")
 
 USE_BLINK_TRIGGER = False
 VALID_THAI_LABELS = {label for label in THAI_LABELS}
@@ -162,8 +160,11 @@ def build_layout_frame(
     camera_frame: np.ndarray,
     current_word: str,
     predicted_character: str,
+    predicted_word: str,
     hand_present: bool,
     blink_enabled: bool,
+    character_enabled: bool,
+    word_enabled: bool,
 ) -> np.ndarray:
     frame_h, frame_w = camera_frame.shape[:2]
     canvas = np.full((frame_h, frame_w, 3), (255, 246, 238), dtype=np.uint8)
@@ -187,22 +188,26 @@ def build_layout_frame(
     canvas = draw_thai_text(canvas, "ช่อง A", (20, y_split + 10), size=26, color=(255, 255, 255))
     a_text = current_word if current_word else "(ยังไม่มีตัวอักษร)"
     canvas = draw_thai_text(canvas, a_text, (20, y_split + 55), size=40, color=(255, 255, 255))
+    word_text = f"คำที่ตรวจพบ: {predicted_word if word_enabled and predicted_word else 'รอคำ'}"
+    canvas = draw_thai_text(canvas, word_text, (20, y_split + 105), size=26, color=(255, 255, 255))
 
     sidebar_x = x_split + 16
     canvas = draw_thai_text(canvas, "ฟังก์ชัน", (sidebar_x, 16), size=30, color=(255, 255, 255))
 
     live_text = f"ท่าปัจจุบัน: {predicted_character if predicted_character else 'รอท่าทาง'}"
-    hand_text = "มือ: พร้อม" if hand_present else "มือ: รอ"
+    hand_text = "สองมือ: พร้อม" if hand_present else "สองมือ: รอ"
     blink_text = "Blink: ON" if blink_enabled else "Blink: OFF"
+    mode_text = f"พยัญชนะ: {'ON' if character_enabled else 'OFF'} | คำ: {'ON' if word_enabled else 'OFF'}"
 
     canvas = draw_thai_text(canvas, live_text, (sidebar_x, 68), size=20, color=(255, 255, 255))
     canvas = draw_thai_text(canvas, hand_text, (sidebar_x, 98), size=20, color=(255, 255, 255))
     canvas = draw_thai_text(canvas, blink_text, (sidebar_x, 128), size=20, color=(255, 255, 255))
+    canvas = draw_thai_text(canvas, mode_text, (sidebar_x, 155), size=16, color=(255, 255, 255))
 
-    canvas = draw_thai_text(canvas, "Y: เริ่มเพิ่มพยัญชนะ", (sidebar_x, 180), size=18, color=(255, 255, 255))
-    canvas = draw_thai_text(canvas, "R: ให้บอทพูดข้อความ", (sidebar_x, 206), size=18, color=(255, 255, 255))
-    canvas = draw_thai_text(canvas, "T: ลบตัวล่าสุด", (sidebar_x, 232), size=18, color=(255, 255, 255))
-    canvas = draw_thai_text(canvas, "คลิกช่อง A: พิมพ์ข้อความ", (sidebar_x, 258), size=18, color=(255, 255, 255))
+    canvas = draw_thai_text(canvas, "C: เปิด/ปิดตรวจพยัญชนะ", (sidebar_x, 180), size=18, color=(255, 255, 255))
+    canvas = draw_thai_text(canvas, "V: เปิด/ปิดตรวจคำ", (sidebar_x, 206), size=18, color=(255, 255, 255))
+    canvas = draw_thai_text(canvas, "R: ให้บอทพูดผลลัพธ์", (sidebar_x, 232), size=18, color=(255, 255, 255))
+    canvas = draw_thai_text(canvas, "T: ลบตัวล่าสุด", (sidebar_x, 258), size=18, color=(255, 255, 255))
     canvas = draw_thai_text(canvas, "Q: ออกจากโปรแกรม", (sidebar_x, 284), size=18, color=(255, 255, 255))
 
     return canvas
@@ -263,7 +268,6 @@ CV2_DATA_DIR = Path(cv2.__file__).resolve().parent / 'data'
 FACE_CASCADE = cv2.CascadeClassifier(str(CV2_DATA_DIR / 'haarcascade_frontalface_default.xml'))
 EYE_CASCADE = cv2.CascadeClassifier(str(CV2_DATA_DIR / 'haarcascade_eye.xml'))
 
-# Try to initialize pose detector (may not be available in all MediaPipe versions)
 pose_detector = None
 try:
     mp_solutions = getattr(mp, 'solutions', None)
@@ -277,11 +281,10 @@ try:
             min_tracking_confidence=0.5
         )
 except AttributeError:
-    safe_print("Warning: Pose detection not available in this MediaPipe version")
+    pass
 
 
 def create_hand_landmarker() -> Any | None:
-    """Initialize hand detector using MediaPipe Tasks API (เหมือนกับ Video.py และ collect_imgs.py)"""
     try:
         model_path = BASE_DIR / 'hand_landmarker.task'
         if not model_path.exists():
@@ -302,7 +305,6 @@ def create_hand_landmarker() -> Any | None:
 
 
 def create_face_landmarker() -> Any | None:
-    """Initialize face detector using MediaPipe Tasks"""
     try:
         model_path = BASE_DIR / 'face_landmarker.task'
         if not model_path.exists():
@@ -330,9 +332,7 @@ def extract_image_features(frame: np.ndarray) -> np.ndarray:
 
 
 def extract_hand_features(frame: np.ndarray) -> np.ndarray:
-    """Extract normalized hand landmark features (126 dims: 21 landmarks x 3 x 2 hands)
-    ใช้ MediaPipe Tasks API เหมือนกับ create_dataset.py และ Video.py"""
-    features = np.zeros(126, dtype=float)
+    features = np.zeros(1530, dtype=float)
 
     hand_landmarker = HAND_LANDMARKER
     if hand_landmarker is None:
@@ -353,6 +353,18 @@ def extract_hand_features(frame: np.ndarray) -> np.ndarray:
                 normalized = (landmarks_array - wrist) / hand_scale
                 for i, norm_lm in enumerate(normalized):
                     features[start_offset + (i * 3):(start_offset + (i * 3) + 3)] = norm_lm
+
+            if FACE_LANDMARKER is not None:
+                face_result = FACE_LANDMARKER.detect(mp_image)
+                if face_result and face_result.face_landmarks:
+                    face_array = np.asarray(
+                        [[lm.x, lm.y, lm.z] for lm in face_result.face_landmarks[0]],
+                        dtype=float,
+                    )
+                    face_origin = face_array[1]
+                    face_scale = np.linalg.norm(face_array[10] - face_origin) + 1e-6
+                    face_features = (face_array - face_origin) / face_scale
+                    features[126:126 + min(face_features.size, 1404)] = face_features.reshape(-1)[:1404]
     except Exception:
         pass
 
@@ -368,13 +380,12 @@ def is_hand_present(frame: np.ndarray) -> bool:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
         result = hand_landmarker.detect(mp_image)
-        return bool(result and result.hand_landmarks)
+        return bool(result and len(result.hand_landmarks) >= 1)
     except Exception:
         return False
 
 
 def detect_eye_state(frame: np.ndarray) -> tuple[bool, list[tuple[int, int]], bool]:
-    """คืนค่า (หลับตาไหม, จุดที่ใช้แสดงผล, พบใบหน้าไหม) จากการตรวจตาด้วย Haar cascade"""
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = FACE_CASCADE.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(100, 100))
     if len(faces) == 0:
@@ -391,7 +402,7 @@ def detect_eye_state(frame: np.ndarray) -> tuple[bool, list[tuple[int, int]], bo
     if len(eye_points) >= 2:
         return False, eye_points, True
 
-    # ถ้าตรวจตาไม่เจอครบสองข้าง ให้ใช้จุดกลางหน้าสำหรับสถานะ "หลับตา"
+
     face_center = (x + w // 2, y + h // 2)
     return True, [face_center], True
 
@@ -449,15 +460,13 @@ def train_word_model_from_folders() -> bool:
 
     return True
 
-# --- 2. ฟังก์ชันบอทประมวลผลและเทรนเสียงอ่านสด (Dynamic TTS) ---
+
 def speak_word_worker(text_to_speak: str) -> None:
     if not text_to_speak.strip():
         return
     if not GTTS_AVAILABLE:
-        safe_print("Warning: gtts not installed; cannot play voice output.")
         return
     try:
-        # บอทจะทำการเรียนรู้และแปลงตัวหนังสือภาษาไทยเป็นไฟล์เสียงทันที
         tts_factory = gTTS
         if tts_factory is None:
             return
@@ -466,37 +475,40 @@ def speak_word_worker(text_to_speak: str) -> None:
         tts.write_to_fp(cast(Any, fp))
         fp.seek(0)
         
-        # เล่นเสียงออกลำโพง
         mixer.music.load(fp, 'mp3')
         mixer.music.play()
-    except Exception as e:
-        safe_print(f"เกิดข้อผิดพลาดในการเล่นเสียง: {e}")
+    except Exception:
+        pass
 
 def main() -> None:
     global USE_BLINK_TRIGGER
 
-    if not MODEL_PATH.exists():
-        safe_print("ไม่พบไฟล์โมเดล กรุณารัน train_classifier.py ก่อน")
+    if not MODEL_PATH.exists() and not WORD_MODEL_PATH.exists():
+        safe_print("ไม่พบไฟล์ model.p หรือ word_model.p กรุณารัน train_classifier.py ก่อน")
         return
 
-    with MODEL_PATH.open('rb') as f:
-        model = pickle.load(f)['model']
+    model = None
+    word_model = None
+    if MODEL_PATH.exists():
+        with MODEL_PATH.open('rb') as f:
+            model = pickle.load(f)['model']
+    if WORD_MODEL_PATH.exists():
+        with WORD_MODEL_PATH.open('rb') as f:
+            word_model = pickle.load(f)['model']
 
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW) if sys.platform.startswith('win') else cv2.VideoCapture(0)
     
-    # ตัวแปรระบบควบคุมการพิมพ์
-    current_word = ""          # คำศัพท์ที่กำลังผสมอยู่ เช่น "ก็"
-    predicted_character = ""   # ตัวอักษรปัจจุบันที่มือทำท่าอยู่
-    eyes_were_closed = False   # สถานะเฟรมก่อนหน้าเพื่อทำระบบ Debounce (กันตัวอักษรเด้งซ้ำ)
+    current_word = ""
+    predicted_character = ""
+    predicted_word = ""
+    character_enabled = model is not None
+    word_enabled = word_model is not None
+    word_candidate = ""
+    word_started_at = 0.0
+    spoken_word = ""
+    eyes_were_closed = False
     
-    safe_print("=== ระบบเขียนคำด้วยภาษามือ + สั่งบันทึกด้วยการกระพริบตา ===")
-    safe_print("1. ทำท่าภาษามือให้ระบบตรวจจับ")
-    safe_print("2. หลับตา (จุดแดง) เพื่อบันทึกพยัญชนะ หรือกด [E] เพื่อบันทึก")
-    safe_print("3. กด [W] เพื่อเทรนคำปัจจุบัน (สร้างโฟลเดอร์ train_words/<คำ>)")
-    safe_print("4. กดปุ่ม [R] บนคีย์บอร์ด เพื่อสั่งให้ AI อ่านคำนั้นออกมา")
-    safe_print("5. กดปุ่ม [T] เพื่อลบตัวอักษรตัวสุดท้าย")
-    safe_print("6. คลิกเมาส์ที่ช่อง A เพื่อพิมพ์ข้อความ")
-    safe_print("7. กดปุ่ม [Q] เพื่อออกจากโปรแกรม")
+
 
     window_name = 'Sign Language Writer'
     ui_state: dict[str, Any] = {
@@ -513,6 +525,7 @@ def main() -> None:
 
         hand_present = is_hand_present(frame)
         predicted_character = ""
+        predicted_word = ""
         _hand_result = None
         if hand_present:
             try:
@@ -524,11 +537,32 @@ def main() -> None:
             except Exception:
                 pass
             features = extract_hand_features(frame)
-            pred = model.predict([features])
-            raw_prediction = str(pred[0])
-            predicted_character = resolve_label_name(raw_prediction)
-            if predicted_character not in VALID_THAI_LABELS:
-                predicted_character = ""
+            if character_enabled and model is not None:
+                pred = model.predict([features])
+                raw_prediction = str(pred[0])
+                predicted_character = resolve_label_name(raw_prediction)
+                if predicted_character not in VALID_THAI_LABELS:
+                    predicted_character = ""
+            if word_enabled and word_model is not None:
+                predicted_word = str(word_model.predict([features])[0])
+
+        if word_enabled and predicted_word and hand_present:
+            if predicted_word != spoken_word:
+                if predicted_word != word_candidate:
+                    word_candidate = predicted_word
+                    word_started_at = time.monotonic()
+                elif time.monotonic() - word_started_at >= 1.0:
+                    spoken_word = predicted_word
+                    threading.Thread(
+                        target=speak_word_worker,
+                        args=(predicted_word,),
+                        daemon=True,
+                    ).start()
+                    safe_print(f"ตรวจพบคำ '{predicted_word}' ครบ 1 วินาที กำลังพูด")
+        else:
+            word_candidate = ''
+            word_started_at = 0.0
+            spoken_word = ''
 
         # Draw hand landmarks on frame (reuse result from detection above)
         try:
@@ -538,7 +572,6 @@ def main() -> None:
         except Exception:
             pass
         
-        # Draw face landmarks on frame
         try:
             if FACE_LANDMARKER:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -550,7 +583,6 @@ def main() -> None:
         except Exception:
             pass
         
-        # Draw body landmarks on frame
         pose_detector_local = cast(Any, pose_detector) if pose_detector is not None else None
         if pose_detector_local is not None:
             try:
@@ -567,7 +599,6 @@ def main() -> None:
         for point in eye_points:
             cv2.circle(frame, point, 8, point_color, -1)
 
-        # กลไกบันทึกอักษรเมื่อหลับตา (จุดแดง) แบบ 1 ครั้งต่อการหลับตา 1 รอบ
         if not hand_present or not face_found:
             eyes_were_closed = False
         elif is_closed and not eyes_were_closed and predicted_character:
@@ -581,17 +612,28 @@ def main() -> None:
             camera_frame=frame,
             current_word=current_word,
             predicted_character=predicted_character,
+            predicted_word=predicted_word,
             hand_present=hand_present,
             blink_enabled=is_closed,
+            character_enabled=character_enabled,
+            word_enabled=word_enabled,
         )
         ui_state['last_frame_shape'] = display_frame.shape
         cv2.imshow(window_name, display_frame)
         
-        # ตรวจจับการกดปุ่มบนคีย์บอร์ด
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('r') or key == ord('R'):
-            safe_print(f"กำลังส่งคำว่า '{current_word}' ไปให้ AI ประมวลผลเสียง...")
-            threading.Thread(target=speak_word_worker, args=(current_word,), daemon=True).start()
+        if key == ord('c') or key == ord('C'):
+            if model is not None:
+                character_enabled = not character_enabled
+                safe_print(f"ตรวจพยัญชนะ: {'เปิด' if character_enabled else 'ปิด'}")
+        elif key == ord('v') or key == ord('V'):
+            if word_model is not None:
+                word_enabled = not word_enabled
+                safe_print(f"ตรวจคำ: {'เปิด' if word_enabled else 'ปิด'}")
+        elif key == ord('r') or key == ord('R'):
+            speech_text = predicted_word if word_enabled and predicted_word else current_word
+            safe_print(f"กำลังส่งผลลัพธ์ '{speech_text}' ไปให้ AI ประมวลผลเสียง...")
+            threading.Thread(target=speak_word_worker, args=(speech_text,), daemon=True).start()
         elif key == ord('t') or key == ord('T'):
             if current_word:
                 current_word = current_word[:-1]
@@ -599,7 +641,7 @@ def main() -> None:
             else:
                 safe_print("ไม่มีตัวอักษรให้ลบ")
         elif key == ord('e') or key == ord('E'):
-            if predicted_character:
+            if character_enabled and predicted_character:
                 current_word += predicted_character
                 safe_print(f"บันทึกอักษรด้วยปุ่ม E: {predicted_character} -> คำปัจจุบันคือ: {current_word}")
             else:

@@ -20,7 +20,9 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- MediaPipe Tasks API: Hand Landmarker (เหมือนกับ Video.py และ collect_imgs.py) ---
 HAND_TASK_PATH = BASE_DIR / 'hand_landmarker.task'
+FACE_TASK_PATH = BASE_DIR / 'face_landmarker.task'
 _hand_landmarker = None
+_face_landmarker = None
 if HAND_TASK_PATH.exists():
     try:
         _base_options = mp.tasks.BaseOptions(model_asset_buffer=HAND_TASK_PATH.read_bytes())
@@ -38,11 +40,27 @@ if HAND_TASK_PATH.exists():
 else:
     safe_print(f'คำเตือน: ไม่พบไฟล์ {HAND_TASK_PATH}')
 
+if FACE_TASK_PATH.exists():
+    try:
+        _face_base_options = mp.tasks.BaseOptions(model_asset_buffer=FACE_TASK_PATH.read_bytes())
+        _face_options = mp.tasks.vision.FaceLandmarkerOptions(
+            base_options=_face_base_options,
+            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+            num_faces=1,
+            output_face_blendshapes=False,
+            output_facial_transformation_matrixes=False,
+        )
+        _face_landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(_face_options)
+        safe_print(f'โหลด MediaPipe Face Landmarker สำเร็จ: {FACE_TASK_PATH}')
+    except Exception as e:
+        safe_print(f'คำเตือน: โหลด Face Landmarker ไม่สำเร็จ: {e}')
+else:
+    safe_print(f'คำเตือน: ไม่พบไฟล์ {FACE_TASK_PATH}')
+
 
 def extract_features(img):
-    """Extract normalized hand landmark features (126 dims: 21 landmarks × 3D × 2 hands)
-    using MediaPipe Tasks API เหมือนกับที่ inference_classifier.py ใช้"""
-    features = np.zeros(126, dtype=float)
+    """Extract hand and face landmark features from one image or video frame."""
+    features = np.zeros(1530, dtype=float)
 
     if _hand_landmarker is None:
         return features
@@ -62,6 +80,16 @@ def extract_features(img):
                 normalized = (landmarks_array - wrist) / hand_scale
                 for i, norm_lm in enumerate(normalized):
                     features[start_offset + (i * 3):(start_offset + (i * 3) + 3)] = norm_lm
+
+        if _face_landmarker is not None:
+            face_result = _face_landmarker.detect(mp_image)
+            if face_result and face_result.face_landmarks:
+                face_landmarks = face_result.face_landmarks[0]
+                face_array = np.asarray([[lm.x, lm.y, lm.z] for lm in face_landmarks], dtype=float)
+                face_origin = face_array[1]
+                face_scale = np.linalg.norm(face_array[10] - face_origin) + 1e-6
+                face_features = (face_array - face_origin) / face_scale
+                features[126:126 + min(len(face_features) * 3, 1404)] = face_features.reshape(-1)[:1404]
     except Exception:
         pass
 
@@ -119,6 +147,22 @@ def process_word_directories(word_base_dir):
             continue
 
         for file_path in sorted(word_dir.iterdir()):
+            if file_path.is_dir() and file_path.name == 'video':
+                for video_path in sorted(file_path.iterdir()):
+                    if not video_path.is_file() or video_path.suffix.lower() not in ['.mp4', '.avi', '.mov', '.mkv']:
+                        continue
+                    cap = cv2.VideoCapture(str(video_path))
+                    frame_count = 0
+                    while cap.isOpened():
+                        ret, frame = cap.read()
+                        if not ret or frame is None:
+                            break
+                        word_data.append(extract_features(frame).tolist())
+                        word_labels.append(word_label)
+                        frame_count += 1
+                    cap.release()
+                    safe_print(f'Processed word video {video_path.name}: {frame_count} frames as samples.')
+                continue
             if not file_path.is_file() or file_path.suffix.lower() not in ['.jpg', '.jpeg', '.png']:
                 continue
 

@@ -23,23 +23,23 @@ if not MODEL_TASK_PATH.exists():
     safe_print("กรุณาตรวจสอบว่าชื่อไฟล์ถูกต้อง และไม่ได้มีนามสกุลซ่อนอยู่")
     sys.exit(1)
 
-# Initialize body/pose detector (no model file needed)
 pose_detector = None
 try:
-    mp_pose = mp.solutions.pose
-    pose_detector = mp_pose.Pose(
-        static_image_mode=True,
-        model_complexity=1,
-        smooth_landmarks=False,
-        min_detection_confidence=0.5
-    )
+    mp_solutions = getattr(mp, 'solutions', None)
+    if mp_solutions is not None:
+        mp_pose = mp_solutions.pose
+        pose_detector = mp_pose.Pose(
+            static_image_mode=True,
+            model_complexity=1,
+            smooth_landmarks=False,
+            min_detection_confidence=0.5
+        )
 except AttributeError:
     safe_print("Warning: Pose detection not available in this MediaPipe version")
 
 number_of_classes = len(THAI_LABELS)
 dataset_size = 100
 
-# --- 1. ตั้งค่า MediaPipe Tasks API ---
 base_options = python.BaseOptions(model_asset_buffer=MODEL_TASK_PATH.read_bytes())
 options = vision.HandLandmarkerOptions(
     base_options=base_options,
@@ -50,9 +50,11 @@ options = vision.HandLandmarkerOptions(
     min_tracking_confidence=0.5
 )
 detector = vision.HandLandmarker.create_from_options(options)
-# -----------------------------------------------------
+HAND_SIDE_NAMES = {
+    'left': 'ซ้าย',
+    'right': 'ขวา',
+}
 
-# --- 2. ฟังก์ชันสำหรับแสดงผลภาษาไทย ---
 def get_thai_font():
     font_paths = [
         r'C:\Windows\Fonts\THSarabun.ttf',
@@ -94,20 +96,16 @@ def create_camera_capture():
             return cap
     raise RuntimeError('Unable to open a camera device.')
 
-# --- กำหนดจุดเชื่อมต่อของมือ 21 จุดด้วยตัวเอง (ลด Error จาก mediapipe) ---
 HAND_CONNECTIONS = [
-    (0, 1), (1, 2), (2, 3), (3, 4),         # นิ้วโป้ง
-    (0, 5), (5, 6), (6, 7), (7, 8),         # นิ้วชี้
-    (5, 9), (9, 10), (10, 11), (11, 12),    # นิ้วกลาง
-    (9, 13), (13, 14), (14, 15), (15, 16),  # นิ้วนาง
-    (13, 17), (0, 17), (17, 18), (18, 19), (19, 20) # นิ้วก้อย
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (5, 9), (9, 10), (10, 11), (11, 12),
+    (9, 13), (13, 14), (14, 15), (15, 16),
+    (13, 17), (0, 17), (17, 18), (18, 19), (19, 20)
 ]
 
-# --- 3. ฟังก์ชันวาดมือที่สร้างขึ้นเอง ---
 def draw_landmarks_manually(frame, hand_landmarks):
     h, w, _ = frame.shape
-
-    # วาดเส้นเชื่อมต่อระหว่างข้อต่อมือ
     for connection in HAND_CONNECTIONS:
         start_idx, end_idx = connection
         start_lm = hand_landmarks[start_idx]
@@ -115,22 +113,95 @@ def draw_landmarks_manually(frame, hand_landmarks):
 
         x1, y1 = int(start_lm.x * w), int(start_lm.y * h)
         x2, y2 = int(end_lm.x * w), int(end_lm.y * h)
-        cv2.line(frame, (x1, y1), (x2, y2), (255, 255, 255), 2) # เส้นสีขาว
+        cv2.line(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
 
-    # วาดจุดข้อต่อแต่ละจุด
     for landmark in hand_landmarks:
         x, y = int(landmark.x * w), int(landmark.y * h)
-        cv2.circle(frame, (x, y), 5, (0, 0, 255), -1) # จุดสีแดง
+        cv2.circle(frame, (x, y), 5, (0, 0, 255), -1)
+
+
+def _get_hand_bbox(hand_landmarks, frame_shape):
+    h, w = frame_shape[:2]
+    x_coords = []
+    y_coords = []
+    for landmark in hand_landmarks:
+        x_coords.append(int(landmark.x * w))
+        y_coords.append(int(landmark.y * h))
+
+    if not x_coords or not y_coords:
+        return None
+
+    min_x = max(0, min(x_coords))
+    max_x = min(w - 1, max(x_coords))
+    min_y = max(0, min(y_coords))
+    max_y = min(h - 1, max(y_coords))
+    return min_x, max_x, min_y, max_y
+
+
+def crop_hand_region(frame, target_side='right', padding_ratio=0.25, output_size=256):
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+
+    detection_result = detector.detect(mp_image)
+    if not detection_result or not detection_result.hand_landmarks:
+        return None
+
+    selected_bbox = None
+    selected_area = -1
+    handedness_groups = getattr(detection_result, 'handedness', None)
+    target_side_key = str(target_side).lower()
+
+    for index, hand_landmarks in enumerate(detection_result.hand_landmarks[:2]):
+        side_name = None
+        if handedness_groups and index < len(handedness_groups):
+            side_group = handedness_groups[index]
+            if side_group:
+                category = side_group[0]
+                category_name = getattr(category, 'category_name', None)
+                if category_name:
+                    side_name = str(category_name).lower()
+
+        if side_name is None or side_name != target_side_key:
+            continue
+
+        bbox = _get_hand_bbox(hand_landmarks, frame.shape)
+        if bbox is None:
+            continue
+
+        min_x, max_x, min_y, max_y = bbox
+        area = (max_x - min_x + 1) * (max_y - min_y + 1)
+        if area > selected_area:
+            selected_bbox = bbox
+            selected_area = area
+
+    if selected_bbox is None:
+        return None
+
+    min_x, max_x, min_y, max_y = selected_bbox
+    h, w = frame.shape[:2]
+
+    box_w = max_x - min_x + 1
+    box_h = max_y - min_y + 1
+    padding = int(max(box_w, box_h) * padding_ratio)
+
+    min_x = max(0, min_x - padding)
+    max_x = min(w, max_x + padding)
+    min_y = max(0, min_y - padding)
+    max_y = min(h, max_y + padding)
+
+    crop = frame[min_y:max_y, min_x:max_x]
+    if crop.size == 0:
+        return None
+
+    return cv2.resize(crop, (output_size, output_size), interpolation=cv2.INTER_AREA)
 
 
 def draw_task_hand_overlay(frame):
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
-    # ตรวจจับมือ
     detection_result = detector.detect(mp_image)
 
-    # ถ้าระบุตำแหน่งมือได้ ให้วาดจุดและเส้น
     if detection_result.hand_landmarks:
         for hand_landmarks in detection_result.hand_landmarks:
             draw_landmarks_manually(frame, hand_landmarks)
@@ -145,8 +216,6 @@ def write_image(path, image):
     with path.open('wb') as handle:
         handle.write(buffer)
     return True
-# ---------------------------------------------
-
 def main():
     cap = None
     try:
@@ -157,10 +226,13 @@ def main():
 
     current_index = 0
     selected_pose = 1
+    selected_side = 'right'
     safe_print('\n--- โหมดเลือกตัวอักษรและท่าทาง ---')
     safe_print('ปุ่ม [A]         : ย้อนกลับคำศัพท์')
     safe_print('ปุ่ม [D]         : ถัดไปคำศัพท์')
     safe_print('ปุ่ม [1]/[2]/[3] : เลือกท่าตามจำนวนที่มี')
+    safe_print('ปุ่ม [Z]         : เลือกมือซ้าย')
+    safe_print('ปุ่ม [X]         : เลือกมือขวา')
     safe_print('ปุ่ม [Q]         : เลือกและเริ่มถ่ายภาพคำศัพท์ปัจจุบัน')
     safe_print('ปุ่ม [ESC]       : ปิดโปรแกรม\n')
 
@@ -171,13 +243,10 @@ def main():
                 if not ret or frame is None:
                     raise RuntimeError('Failed to capture frame from camera.')
 
-                # พลิกภาพซ้าย-ขวาให้เหมือนกระจก
                 frame = cv2.flip(frame, 1)
 
-                # วาดโครงกระดูกมือ
                 frame = draw_task_hand_overlay(frame)
 
-                # เตรียมข้อความ
                 current_label = THAI_LABELS[current_index]
                 pose_count = get_pose_count_for_index(current_index)
                 if selected_pose > pose_count:
@@ -186,13 +255,14 @@ def main():
                 text1 = f'คำศัพท์ปัจจุบัน: {current_label}'
                 text2 = f'[{current_index + 1}/{number_of_classes}]'
                 text3 = f'ท่า: {selected_pose}/{pose_count}'
-                text4 = 'A: ย้อนกลับ | D: ถัดไป | 1/2/3: เลือกท่า | Q: บันทึก | ESC: ออก'
+                text4 = f'มือ: {HAND_SIDE_NAMES.get(selected_side, selected_side)}'
+                text5 = 'A/D: เปลี่ยนตัว | 1/2/3: เลือกท่า | Z/X: เลือกมือ | Q: บันทึก | ESC: ออก'
 
-                # วาดภาษาไทย
                 frame = draw_thai_text(frame, text1, (20, 10), font_size=32, color=(0, 255, 255))
                 frame = draw_thai_text(frame, text2, (20, 50), font_size=24, color=(255, 255, 255))
                 frame = draw_thai_text(frame, text3, (20, 85), font_size=24, color=(255, 255, 0))
-                frame = draw_thai_text(frame, text4, (20, 120), font_size=18, color=(255, 255, 255))
+                frame = draw_thai_text(frame, text4, (20, 120), font_size=20, color=(0, 255, 255))
+                frame = draw_thai_text(frame, text5, (20, 150), font_size=18, color=(255, 255, 255))
 
                 cv2.imshow('frame', frame)
 
@@ -210,15 +280,29 @@ def main():
                     if 1 <= pose_number <= pose_count:
                         selected_pose = pose_number
                         safe_print(f'เลือกท่า {selected_pose}/{pose_count}')
+                elif key == ord('z') or key == ord('Z'):
+                    selected_side = 'left'
+                    safe_print('เลือกมือซ้าย')
+                elif key == ord('x') or key == ord('X'):
+                    selected_side = 'right'
+                    safe_print('เลือกมือขวา')
                 elif key == ord('q') or key == ord('Q'):
-                    safe_print(f'เตรียมบันทึกคำศัพท์: {THAI_LABELS[current_index]} ท่า {selected_pose}')
+                    safe_print(
+                        f"เตรียมบันทึกคำศัพท์: {THAI_LABELS[current_index]} ท่า {selected_pose} มือ {HAND_SIDE_NAMES.get(selected_side, selected_side)}"
+                    )
 
                     class_dir = DATA_DIR / str(current_index)
                     class_dir.mkdir(parents=True, exist_ok=True)
                     pose_dir = class_dir / str(selected_pose)
                     pose_dir.mkdir(parents=True, exist_ok=True)
+                    side_dir = pose_dir / selected_side
+                    side_dir.mkdir(parents=True, exist_ok=True)
+                    full_frame_dir = side_dir / 'full_frame'
+                    full_frame_dir.mkdir(parents=True, exist_ok=True)
+                    hand_crop_dir = side_dir / 'hand_crop'
+                    hand_crop_dir.mkdir(parents=True, exist_ok=True)
 
-                    cv2.waitKey(1000) # หน่วงเวลา 1 วินาทีก่อนถ่ายรูปแรก
+                    cv2.waitKey(1000)
 
                     counter = 0
                     while counter < dataset_size:
@@ -231,11 +315,22 @@ def main():
                         cv2.imshow('frame', frame)
                         cv2.waitKey(25)
 
-                        output_path = pose_dir / f'{counter}.jpg'
-                        if write_image(output_path, frame):
-                            safe_print(f"บันทึกรูปที่ {counter+1}/{dataset_size} ใน {pose_dir}")
+                        full_frame_path = full_frame_dir / f'{counter}.jpg'
+                        write_image(full_frame_path, frame)
+
+                        output_path = hand_crop_dir / f'{counter}.jpg'
+                        hand_crop = crop_hand_region(frame, target_side=selected_side)
+                        if hand_crop is None:
+                            safe_print(
+                                f"บันทึกรูปเต็มเฟรม {counter+1}/{dataset_size} แล้ว แต่ไม่พบมือชัดเจนสำหรับครอป"
+                            )
+                            counter += 1
+                            continue
+
+                        if write_image(output_path, hand_crop):
+                            safe_print(f"บันทึกรูปที่ {counter+1}/{dataset_size} ใน {side_dir}")
                         else:
-                            safe_print(f"ไม่สามารถบันทึกรูปที่ {counter+1}/{dataset_size} ใน {pose_dir}")
+                            safe_print(f"ไม่สามารถบันทึกรูปที่ {counter+1}/{dataset_size} ใน {side_dir}")
                         counter += 1
 
                     safe_print('บันทึกเสร็จสิ้น! สามารถเลือกคำอื่นต่อได้เลย')

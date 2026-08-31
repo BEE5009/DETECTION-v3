@@ -14,7 +14,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 
-# ดึงรายชื่อคำศัพท์ภาษาไทยจาก labels.py
 try:
     from labels import THAI_LABELS
 except ImportError:
@@ -28,7 +27,6 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 RECORD_SECONDS = 6
 
-# ค้นหาฟอนต์ภาษาไทยในเครื่องคอมพิวเตอร์
 THAI_FONT_PATHS = [
     r'C:\Windows\Fonts\THSarabun.ttf',
     r'C:\Windows\Fonts\THSarabun New.ttf',
@@ -38,11 +36,11 @@ THAI_FONT_PATHS = [
 ]
 
 MY_HAND_CONNECTIONS = [
-    (0, 1), (1, 2), (2, 3), (3, 4),       # นิ้วโป้ง
-    (0, 5), (5, 6), (6, 7), (7, 8),       # นิ้วชี้
-    (5, 9), (9, 10), (10, 11), (11, 12),  # นิ้วกลาง
-    (9, 13), (13, 14), (14, 15), (15, 16),# นิ้วนาง
-    (13, 17), (0, 17), (17, 18), (18, 19), (19, 20) # นิ้วก้อย
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (5, 9), (9, 10), (10, 11), (11, 12),
+    (9, 13), (13, 14), (14, 15), (15, 16),
+    (13, 17), (0, 17), (17, 18), (18, 19), (19, 20)
 ]
 
 def get_thai_font():
@@ -76,7 +74,7 @@ def create_camera_capture():
         if cap.isOpened():
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cap.set(cv2.CAP_PROP_FPS, 60) # >>> ตั้งค่าเปิดกล้องที่ความเร็ว 60 FPS
+            cap.set(cv2.CAP_PROP_FPS, 60)
             return cap
     raise RuntimeError('ไม่สามารถเปิดกล้องได้')
 
@@ -217,7 +215,6 @@ def collect_videos():
                 clip_count = len(list(class_dir.glob('*.mp4')))
                 output_path = class_dir / f'clip_{clip_count}.mp4'
 
-                # >>> กำหนดให้เซฟไฟล์วิดีโอเอาไว้ที่ความเร็วสูง 60.0 FPS
                 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                 writer = cv2.VideoWriter(str(output_path), fourcc, 60.0, (frame.shape[1], frame.shape[0]))
 

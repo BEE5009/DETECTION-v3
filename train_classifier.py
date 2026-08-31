@@ -76,12 +76,12 @@ def main():
     try:
         data_dict = load_training_data()
     except (FileNotFoundError, RuntimeError) as exc:
-        safe_print(exc)
-        return
-
-    data = np.asarray(data_dict['data'], dtype=float)
-    labels = np.asarray([resolve_label_name(label) for label in data_dict['labels']])
-    train_and_save_model(data, labels, MODEL_PATH, 'character')
+        safe_print(f'Skip character training: {exc}')
+    else:
+        data = np.asarray(data_dict['data'], dtype=float)
+        labels = np.asarray([resolve_label_name(label) for label in data_dict['labels']])
+        safe_print(f'Character training: {len(data)} frames')
+        train_and_save_model(data, labels, MODEL_PATH, 'character')
 
     word_data_dict = load_word_training_data()
     if not word_data_dict or not word_data_dict.get('data'):
@@ -90,6 +90,7 @@ def main():
 
     word_data = np.asarray(word_data_dict['data'], dtype=float)
     word_labels = np.asarray([str(label) for label in word_data_dict['labels']])
+    safe_print(f'Word training: {len(word_data)} frames')
     train_and_save_model(word_data, word_labels, WORD_MODEL_PATH, 'word')
 
 
