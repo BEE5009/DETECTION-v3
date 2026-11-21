@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ภาษามือไทย | Sign Language Writer</title>
+  <style>
+    :root { --ink:#12383d; --teal:#087f8c; --cream:#f7f4ed; --gold:#f5c86b; --line:#d9e5e3; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:radial-gradient(circle at top right,#d9f1ed 0,transparent 35%),var(--cream); font-family:Tahoma,"Noto Sans Thai",sans-serif; }
+    main { width:min(1120px,calc(100% - 32px)); margin:24px auto 48px; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; }
+    h1 { margin:0; font-size:clamp(1.5rem,3vw,2.35rem); letter-spacing:0; }
+    .connection { display:flex; align-items:center; gap:8px; font-weight:700; font-size:.9rem; }
+    .dot { width:10px; height:10px; border-radius:50%; background:#e05252; }
+    .dot.ready { background:#35a66f; }
+    .grid { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(300px,.8fr); gap:16px; }
+    .panel { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:18px; padding:16px; box-shadow:0 12px 28px rgba(18,56,61,.08); }
+    .camera { position:relative; padding:0; overflow:hidden; background:var(--ink); aspect-ratio:4/3; }
+    video#camera { width:100%; height:100%; display:block; object-fit:cover; transform:scaleX(-1); }
+    #snapshot { display:none; }
+    .camera-label { position:absolute; left:14px; bottom:14px; padding:8px 12px; color:white; background:rgba(18,56,61,.8); border-radius:10px; font-size:.9rem; }
+    .results { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+    .result { background:var(--ink); color:white; border-radius:14px; padding:14px; text-align:center; }
+    .result small { color:#b9d6d3; display:block; }
+    .result strong { display:block; color:var(--gold); font-size:2rem; margin-top:4px; }
+    .status { display:flex; justify-content:space-between; gap:10px; margin:12px 0; color:#46666a; font-size:.92rem; }
+    .written { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:white; min-height:52px; }
+    .written span { flex:1; font-size:1.35rem; font-weight:700; overflow-wrap:anywhere; }
+    button { border:0; border-radius:10px; padding:11px 13px; font:inherit; font-weight:700; cursor:pointer; color:var(--ink); background:#e7f1ef; }
+    button.primary { color:white; background:var(--teal); }
+    button:hover { filter:brightness(.96); }
+    .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+    .actions button { flex:1 1 145px; }
+    .side h2 { margin:0 0 12px; font-size:1.15rem; }
+    .side p { color:#46666a; margin:8px 0 16px; line-height:1.55; }
+    .switches { display:grid; gap:8px; }
+    label.toggle { display:flex; align-items:center; justify-content:space-between; border:1px solid var(--line); padding:11px 12px; border-radius:10px; background:white; }
+    input[type=checkbox] { width:20px; height:20px; accent-color:var(--teal); }
+    video#wordVideo { width:100%; border-radius:12px; margin-top:16px; background:#0b292d; display:none; }
+    @media (max-width:760px) { main { width:min(100% - 20px,560px); margin-top:14px; } .grid { grid-template-columns:1fr; } header { align-items:flex-start; flex-direction:column; } }
+  </style>
+</head>
+<body>
+<main>
+  <header><h1>ภาษามือไทย</h1><div class="connection"><i class="dot" id="dot"></i><span id="status">กำลังเตรียมกล้อง</span></div></header>
+  <section class="grid">
+    <div>
+      <div class="panel camera"><video id="camera" autoplay playsinline muted></video><canvas id="snapshot"></canvas><div class="camera-label">แสดงผลจากกล้องแบบสด</div></div>
+      <div class="status"><span id="detection">รอท่ามือ</span><span id="presence">มือ 0/2 | รอหน้า</span></div>
+      <div class="results"><div class="result"><small>ท่าปัจจุบัน</small><strong id="character">-</strong></div><div class="result"><small>คำที่ตรวจพบ</small><strong id="word">-</strong></div></div>
+      <div class="panel" style="margin-top:12px"><div class="written"><span id="written">ผลลัพธ์ที่เขียนจะแสดงตรงนี้</span><button id="delete" title="ลบตัวล่าสุด">ลบ</button></div><div class="actions"><button class="primary" id="add">เพิ่มผลลัพธ์</button><button id="speak">พูดผลลัพธ์</button><button id="play">ดูวิดีโอคำนี้</button><button id="clear">ล้างทั้งหมด</button></div><video id="wordVideo" controls></video></div>
+    </div>
+    <aside class="panel side"><h2>การควบคุม</h2><p>ระบบใช้โมเดลจากโปรเจกต์เดิม ตรวจมือได้สูงสุดสองข้าง และอ่านผลจากกล้องเป็นคำศัพท์ภาษาไทย</p><div class="switches"><label class="toggle">ตรวจตัวอักษร <input id="characterMode" type="checkbox" checked></label><label class="toggle">ตรวจคำศัพท์ <input id="wordMode" type="checkbox" checked></label></div><div class="actions"><button id="refresh">รีเฟรชกล้อง</button></div><p id="sync">วิดีโอคำศัพท์จะเรียกจากโฟลเดอร์ train_words โดยตรง</p></aside>
+  </section>
+</main>
+<script>
+const api = '';
+const camera = document.querySelector('#camera'), canvas = document.querySelector('#snapshot'), ctx = canvas.getContext('2d');
+const $ = id => document.querySelector(id); let stream, busy = false, written = '';
+async function startCamera() { try { stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false}); camera.srcObject = stream; $('status').textContent='พร้อมแปลภาษา'; $('dot').classList.add('ready'); } catch(e) { $('status').textContent='เปิดกล้องไม่ได้'; } }
+async function predict() { if (busy || !stream || camera.readyState < 2) return; busy=true; canvas.width=camera.videoWidth; canvas.height=camera.videoHeight; ctx.drawImage(camera,0,0); try { const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',.78)); const res=await fetch(api+'/predict',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:blob}); if(!res.ok) throw Error(); const data=await res.json(); $('character').textContent=$('characterMode').checked?(data.character||'-'):'-'; $('word').textContent=$('wordMode').checked?(data.word||'-'):'-'; $('detection').textContent=data.hand_present?'ตรวจพบมือ':'รอท่ามือ'; $('presence').textContent=`มือ ${data.hand_count||0}/2 | ${data.face_present?'หน้า OK':'รอหน้า'}`; $('status').textContent='กำลังตรวจจับ'; } catch(e) { $('status').textContent='เชื่อมต่อ AI ไม่ได้'; $('dot').classList.remove('ready'); } busy=false; }
+function renderWritten() { $('written').textContent=written||'ผลลัพธ์ที่เขียนจะแสดงตรงนี้'; }
+$('add').onclick=()=>{const c=$('character').textContent;if(c&&c!=='-'){written+=c;renderWritten();}}; $('delete').onclick=()=>{written=written.slice(0,-1);renderWritten();}; $('clear').onclick=()=>{written='';renderWritten();}; $('speak').onclick=()=>speechSynthesis.speak(new SpeechSynthesisUtterance($('word').textContent!=='-'?$('word').textContent:written)); $('refresh').onclick=startCamera;
+$('play').onclick=()=>{const word=$('word').textContent!=='-'?$('word').textContent:written;if(!word)return;const player=$('wordVideo');player.src=api+'/video/'+encodeURIComponent(word);player.style.display='block';player.play().catch(()=>{$('status').textContent='ยังไม่มีวิดีโอคำนี้';});};
+startCamera(); setInterval(predict,900);
+</script>
+</body>
+</html>

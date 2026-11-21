@@ -264,9 +264,20 @@ def on_mouse_click(event: int, x: int, y: int, _flags: int, state: Any | None) -
         state['request_text_input'] = True
 
 # --- Initialize Face & Body Detection ---
-CV2_DATA_DIR = Path(cv2.__file__).resolve().parent / 'data'
-FACE_CASCADE = cv2.CascadeClassifier(str(CV2_DATA_DIR / 'haarcascade_frontalface_default.xml'))
-EYE_CASCADE = cv2.CascadeClassifier(str(CV2_DATA_DIR / 'haarcascade_eye.xml'))
+cv2_module = cast(Any, cv2)
+CV2_DATA_DIR = Path(cv2_module.data.haarcascades) if hasattr(cv2_module, 'data') else Path(cv2.__file__).resolve().parent / 'data'
+
+
+def load_cascade(filename: str) -> Any | None:
+    cascade_path = CV2_DATA_DIR / filename
+    if not cascade_path.exists():
+        return None
+    cascade = cv2.CascadeClassifier(str(cascade_path))
+    return cascade if not cascade.empty() else None
+
+
+FACE_CASCADE = load_cascade('haarcascade_frontalface_default.xml')
+EYE_CASCADE = load_cascade('haarcascade_eye.xml')
 
 pose_detector = None
 try:
@@ -386,6 +397,9 @@ def is_hand_present(frame: np.ndarray) -> bool:
 
 
 def detect_eye_state(frame: np.ndarray) -> tuple[bool, list[tuple[int, int]], bool]:
+    if FACE_CASCADE is None or EYE_CASCADE is None:
+        return False, [], False
+
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = FACE_CASCADE.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(100, 100))
     if len(faces) == 0:

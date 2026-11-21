@@ -1,0 +1,26 @@
+name: sign_language_writer
+
+description: Thai sign language translator for Android.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  camera: ^0.12.1
+  http: ^1.2.2
+  video_player: ^2.9.2
+  flutter_tts: ^4.2.0
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
